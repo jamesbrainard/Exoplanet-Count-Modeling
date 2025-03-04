@@ -7,59 +7,59 @@ format:
     embed-resources: true
 ---
 
+# Introduction
+
+#### What factors link most significantly to modeling the number of exoplanets in a star system?
+
+Formation of star, exoplanets, and the systems they inhabit have long been the topic of scientific research. Studying what kinds of factors contribute most heavily to the number of exoplanets in a star system can help us understand what influences the planet count of these systems.
+
 ```{r setup, include=FALSE}
 # Would include this chunk at beginning of report.
 # Prevents code, warnings (important when loading tidyverse), and messages from outputting
 knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
 ```
 
-```{r}
+```{r, message = FALSE}
 library(tidyverse)
 library(ggplot2)
 library(dplyr)
 ```
 
-
 ```{r}
 data <- read.csv("data/exoplanet_data.csv", skip = 322)
 vars <- c("sy_snum", "st_mass", "st_rad", "st_lum", "st_met", "pl_orbper", "pl_orbsmax", "pl_orbeccen", "st_age", "pl_insol", "st_logg", "st_dens", "st_vsin")
 data <- data %>%
-  filter(pl_orbper < 10000)
+  filter(pl_orbper < 10000) # Removes outliers
 ```
 
-Describing variables:
 
-+---------------+-----------------------------------------------------------------------------+
-| Variable      | Description                                                                 |
-+===============+=============================================================================+
-| `sy_snum`         | Number of stars in the system                                   |
-+---------------+-----------------------------------------------------------------------------+
-| `st_mass`         | Stellar mass                                                         |
-+---------------+-----------------------------------------------------------------------------+
-| `st_rad`          | Stellar radius                                                           |
-+---------------+-----------------------------------------------------------------------------+
-| `st_lum`          | Stellar luminosity                                         |
-+---------------+-----------------------------------------------------------------------------+
-| `st_met`         | Stellar metallicity                                                         |
-+---------------+-----------------------------------------------------------------------------+
-| `pl_orbper`          | Orbital period                                                           |
-+---------------+-----------------------------------------------------------------------------+
-| `pl_orbsmax`          | Semi-major axis                                         |
-+---------------+-----------------------------------------------------------------------------+
-| `st_mass`         | Stellar mass                                                         |
-+---------------+-----------------------------------------------------------------------------+
-| `pl_orbeccen`          | Eccentricity                                                           |
-+---------------+-----------------------------------------------------------------------------+
-| `st_age`         | Stellar age (in gigayears, or 1 billion years)                          |
-+---------------+-----------------------------------------------------------------------------+
-| `pl_insol`         | Insolation flux                         |
-+---------------+-----------------------------------------------------------------------------+
-| `st_logg`         | Stellar surface gravity                     |
-+---------------+-----------------------------------------------------------------------------+
-| `st_dens`         | Stellar density                        |
-+---------------+-----------------------------------------------------------------------------+
-| `st_vsin`         | Stellar rotational velocity                        |
-+---------------+-----------------------------------------------------------------------------+
+#### The Dataset
+Understanding data is vital to understanding outputs. This dataset comes from the NASA Exoplanet Science Institute. It is organized such that each row represents a composite planetary observation from all observatories that have seen the planet. Observatories will sometimes take observe different measurements for the same planet, so a composite table gives the most accurate data available.
+
+#### Citation
+NASA Exoplanet Archive. (2024). Planetary Systems Composite Data Table [Data set]. NASA Exoplanet Science Institute. https://doi.org/10.26133/NEA13
+
+| Variable      | Description                                | Explanation                                     |
+|--------------|--------------------------------------------|----------------------------------------------------------------|
+| `sy_snum`    | Number of stars in the system             | How many stars are in the system (there can be more than one!) |
+| `st_mass`    | Stellar mass                              | The weight of the star compared to the Sun                     |
+| `st_rad`     | Stellar radius                            | The size of the star compared to the Sun                       |
+| `st_lum`     | Stellar luminosity                        | How bright the star is compared to the Sun                     |
+| `st_met`     | Stellar metallicity                       | How much heavy elements (like iron) the star has               |
+| `pl_orbper`  | Orbital period                            | How long a planet takes to orbit its star (in days)            |
+| `pl_orbsmax` | Semi-major axis                           | The average distance between the planet and the star (in AU)   |
+| `pl_orbeccen`| Eccentricity                              | How oval-shaped the planet’s orbit is (0 = circle, 1 = line)   |
+| `st_age`     | Stellar age (in gigayears)                | How old the star is, in billions of years                      |
+| `pl_insol`   | Insolation flux                           | How much sunlight a planet gets compared to Earth              |
+| `st_logg`    | Stellar surface gravity                   | The strength of gravity on the star's surface                  |
+| `st_dens`    | Stellar density                           | How tightly packed the star’s material is                      |
+| `st_vsin`    | Stellar rotational velocity               | How fast the star is spinning                                  |
+
+# Exploratory Data Analysis
+
+First, we can explore a distribution of all features to see if there are any standouts or abnormal data. Each axis of these distributions is scaled to the data that it measures, so the numbered labels are largely useless unless the reader is an expert in astronomy. However, for now, the actual values are not as important as the distributions.
+
+A few variables, such as st_met and st_lum, seem to follow (somewhat) normal distributions, whereas most seem to have more right-skewed distributions.
 
 ```{r}
 data_long <- data %>%
@@ -71,16 +71,24 @@ ggplot(data_long, aes(x = Value)) +
   facet_wrap(~Variable, scales = "free") +
   labs(title = "Distribution of Features",
        x = "Values",
-       y = "Counts") +
-  theme_minimal() # I know this is a telltale chatgpt line but I actually just really like it for this
+       y = "Counts",
+       caption = "Fig. 1: Histogram distributions of explanatory variables.") +
+  theme_minimal() # I know this is a telltale chatgpt line but I've started to just really like the theme
+```
 
+Next, we can check the distribution of the response variable - the count of planets in a system. This distribution has a right skew as well, and it gives quite a level of appreciation for the fact that we live in an 8-planet system.
+
+```{r}
 ggplot(data, aes(x = sy_pnum)) +
   geom_bar(fill = "blue", alpha = 0.5) +
   labs(title = "Distribution of sy_pnum (Number of Planets)",
        x = "Values",
-       y = "Counts") +
+       y = "Counts",
+       caption = "Fig. 2: Histogram distribution of response variable.") +
   theme_minimal()
 ```
+
+While checking over our data before running any models, it can be useful to see if the data possesses traits that would be expected based on known physical laws. To start with, a larger star is expected to be more luminous, which is confirmed by Fig. 3.
 
 ```{r}
 ggplot(data, aes(x = log10(st_rad), y = st_lum)) +
@@ -88,14 +96,32 @@ ggplot(data, aes(x = log10(st_rad), y = st_lum)) +
   geom_smooth(color = "red") +
   labs(title = "Stellar Radius vs Luminosity",
        x = "Logarithmic Stellar Radius",
-       y = "Luminosity")
+       y = "Luminosity",
+       caption = "Fig. 3: An examination on correlation between star size and luminosity.")
 ```
+
+Kepler's Third Law states that the farther a planet is from its star, the longer it takes to orbit, given by the equation:
+
+$$P^2 \propto a^3$$
+
+Our data agrees:
+
+```{r}
+ggplot(data, aes(x = pl_orbsmax,y = pl_orbsmax)) +
+  geom_point(color = "blue", alpha = 0.3) +
+  labs(title = "Orbital Period vs Semi-Major Axis",
+       x = "Semi-Major Axis (AU)",
+       y = "Orbital Period (Days)",
+       caption = "Fig. 4: An illustration of Kepler's third law.")
+```
+
 
 ```{r}
 poisson_model <- glm(sy_pnum ~ sy_snum + st_mass + st_rad + st_lum + st_met + pl_orbper + pl_orbsmax + pl_orbeccen + st_age + pl_insol + st_logg + st_dens + st_vsin, data = data, family = poisson)
 
 summary(poisson_model)
 ```
+
 ```{r}
 library(MASS)
 
@@ -115,5 +141,3 @@ summary(negative_binomial_model)
 ```{r}
 # Conclusion - Answer research question, areas for improvement, and future work
 ```
-
-
