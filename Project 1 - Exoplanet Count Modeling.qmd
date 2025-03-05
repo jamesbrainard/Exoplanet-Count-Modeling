@@ -116,7 +116,8 @@ ggplot(data, aes(x = pl_orbsmax,y = pl_orbsmax)) +
   labs(title = "Orbital Period vs Semi-Major Axis",
        x = "Semi-Major Axis (AU)",
        y = "Orbital Period (Days)",
-       caption = "Fig. 4: An illustration of Kepler's third law.")
+       caption = "Fig. 4: An illustration of Kepler's third law.") +
+  theme_minimal()
 ```
 
 With explanatory variables that are so directly correlated, it will be important to keep collinearity in mind when narrowing down our important features.
@@ -256,7 +257,8 @@ ggplot(data = residuals_row_removal, aes(x=row_removal_fitted_values, y=row_remo
     y='Residuals',
     caption='Residuals vs Fitted Values for row removal data') +
   ylim(-1, 15) +
-  xlim(0, 3)
+  xlim(0, 3) +
+  theme_minimal()
 
 ggplot(data = residuals_imputation, aes(x=imputation_fitted_values, y=imputation_residuals)) +
   geom_point() + 
@@ -268,7 +270,8 @@ ggplot(data = residuals_imputation, aes(x=imputation_fitted_values, y=imputation
     y='Residuals',
     caption='Residuals vs Fitted Values for knn-imputed data') +
   ylim(-1, 15) +
-  xlim(0, 3)
+  xlim(0, 3) +
+  theme_minimal()
 ```
 
 Though both graphs look very similar, the graph for knn-imputed data looks to handle clumping just slightly better than the row-removal data. For the remainder of this report, 'poisson_model_imputed' will be used. There is certainly clumping present, which is worth noting.
@@ -341,7 +344,8 @@ ggplot(data = residuals_final_model, aes(x=final_fitted_values, y=final_residual
     y='Residuals',
     caption='Residuals vs Fitted Values for the final model') +
   ylim(-1, 15) +
-  xlim(0, 3)
+  xlim(0, 3) +
+  theme_minimal()
 ```
 
 | Variable     | Coefficient Estimate        | p-value                    |
