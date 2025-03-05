@@ -1,7 +1,7 @@
 ---
 title: "Modeling Exoplanet Counts"
 author: "James Brainard"
-subtitle: "subtitle"
+subtitle: "Using Poisson and Negative Binomial models."
 format: 
   html:
     embed-resources: true
@@ -23,15 +23,19 @@ knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
 library(tidyverse)
 library(ggplot2)
 library(dplyr)
+library(car)
+library(MASS)
+library(DMwR2) # For imputation
+               # https://github.com/ltorgo/DMwR2
 ```
 
-```{r}
+```{r, cache = TRUE}
 data <- read.csv("data/exoplanet_data.csv", skip = 322)
-vars <- c("sy_snum", "st_mass", "st_rad", "st_lum", "st_met", "pl_orbper", "pl_orbsmax", "pl_orbeccen", "st_age", "pl_insol", "st_logg", "st_dens", "st_vsin")
+vars <- c("sy_pnum", "sy_snum", "st_mass", "st_rad", "st_lum", "st_met", "pl_orbper", "pl_orbsmax", "pl_orbeccen", "st_age", "pl_insol", "st_logg", "st_dens")
+data <- data[vars]
 data <- data %>%
   filter(pl_orbper < 10000) # Removes outliers
 ```
-
 
 #### The Dataset
 Understanding data is vital to understanding outputs. This dataset comes from the NASA Exoplanet Science Institute. It is organized such that each row represents a composite planetary observation from all observatories that have seen the planet. Observatories will sometimes take observe different measurements for the same planet, so a composite table gives the most accurate data available.
@@ -41,6 +45,7 @@ NASA Exoplanet Archive. (2024). Planetary Systems Composite Data Table [Data set
 
 | Variable      | Description                                | Explanation                                     |
 |--------------|--------------------------------------------|----------------------------------------------------------------|
+| `sy_pnum`    | Number of planets in the system           | Response variable                                              |
 | `sy_snum`    | Number of stars in the system             | How many stars are in the system (there can be more than one!) |
 | `st_mass`    | Stellar mass                              | The weight of the star compared to the Sun                     |
 | `st_rad`     | Stellar radius                            | The size of the star compared to the Sun                       |
@@ -53,7 +58,6 @@ NASA Exoplanet Archive. (2024). Planetary Systems Composite Data Table [Data set
 | `pl_insol`   | Insolation flux                           | How much sunlight a planet gets compared to Earth              |
 | `st_logg`    | Stellar surface gravity                   | The strength of gravity on the star's surface                  |
 | `st_dens`    | Stellar density                           | How tightly packed the star’s material is                      |
-| `st_vsin`    | Stellar rotational velocity               | How fast the star is spinning                                  |
 
 # Exploratory Data Analysis
 
@@ -63,7 +67,6 @@ A few variables, such as st_met and st_lum, seem to follow (somewhat) normal dis
 
 ```{r}
 data_long <- data %>%
-  select(all_of(vars)) %>%
   pivot_longer(cols = everything(), names_to = "Variable", values_to = "Value")
 
 ggplot(data_long, aes(x = Value)) +
@@ -73,7 +76,7 @@ ggplot(data_long, aes(x = Value)) +
        x = "Values",
        y = "Counts",
        caption = "Fig. 1: Histogram distributions of explanatory variables.") +
-  theme_minimal() # I know this is a telltale chatgpt line but I've started to just really like the theme
+  theme_minimal()
 ```
 
 Next, we can check the distribution of the response variable - the count of planets in a system. This distribution has a right skew as well, and it gives quite a level of appreciation for the fact that we live in an 8-planet system.
@@ -92,12 +95,13 @@ While checking over our data before running any models, it can be useful to see 
 
 ```{r}
 ggplot(data, aes(x = log10(st_rad), y = st_lum)) +
-  geom_point(color = "blue", alpha = 0.5) +
-  geom_smooth(color = "red") +
+  geom_point(color = "blue", alpha = 0.1) +
+  geom_smooth(color = "red", alpha = 0.5) +
   labs(title = "Stellar Radius vs Luminosity",
        x = "Logarithmic Stellar Radius",
        y = "Luminosity",
-       caption = "Fig. 3: An examination on correlation between star size and luminosity.")
+       caption = "Fig. 3: An examination on correlation between star size and luminosity.") +
+  theme_minimal()
 ```
 
 Kepler's Third Law states that the farther a planet is from its star, the longer it takes to orbit, given by the equation:
@@ -106,38 +110,265 @@ $$P^2 \propto a^3$$
 
 Our data agrees:
 
-```{r}
+```{r, cache = TRUE}
 ggplot(data, aes(x = pl_orbsmax,y = pl_orbsmax)) +
-  geom_point(color = "blue", alpha = 0.3) +
+  geom_point(color = "blue", alpha = 0.05) +
   labs(title = "Orbital Period vs Semi-Major Axis",
        x = "Semi-Major Axis (AU)",
        y = "Orbital Period (Days)",
        caption = "Fig. 4: An illustration of Kepler's third law.")
 ```
 
+With explanatory variables that are so directly correlated, it will be important to keep collinearity in mind when narrowing down our important features.
+
+# Model Fitting / Model Selection
+
+First, a Poisson model is fit to the data.
+
+#### Why a Poisson model?
+The number of planets in a system is count data, discrete and non-negative. Poisson distributions also assume that mean and variance are equal, and while this rarely ever occurs with real data, variance (1.36) and mean (1.80) for 'sy_pnum' are not terribly far apart.
+
+```{r, message = FALSE}
+poisson_model <- glm(sy_pnum ~ sy_snum + st_mass + st_rad + st_lum + st_met + pl_orbper + pl_orbsmax + pl_orbeccen + st_age + pl_insol + st_logg + st_dens, data = data, family = poisson)
+```
+
+Next, a negative binomial model is fit to the data.
+
+#### Why a Negative Binomial model?
+Negative Binomial models add a dispersion parameter, making them more flexible than Poisson models. With such a high number of systems with only 1 or 2 planets, overdispersion is to be anticipated.
+
+```{r, message = FALSE}
+negative_binomial_model <- glm.nb(sy_pnum ~ sy_snum + st_mass + st_rad + st_lum + st_met + pl_orbper + pl_orbsmax + pl_orbeccen + st_age + pl_insol + st_logg + st_dens, data = data)
+```
+
+# Model Comparison
+
+## Missing Data
+
+Missing data is a huge problem in many astronomy datasets. There is so much to collect - and so little funding and time - that observatories can't get data for everything. As a result, there is a large amount of missing data in the exoplanet dataset. Two approaches to this missing data problem are row removal and imputation. 
+
+### Row Removal
+Row removal constitutes removing any row of data where an NA value exists. This removes 1927 out of 5482 rows, which is a large chunk.
 
 ```{r}
-poisson_model <- glm(sy_pnum ~ sy_snum + st_mass + st_rad + st_lum + st_met + pl_orbper + pl_orbsmax + pl_orbeccen + st_age + pl_insol + st_logg + st_dens + st_vsin, data = data, family = poisson)
+#summary(poisson_model)
+#summary(negative_binomial_model)
+```
 
-summary(poisson_model)
+Using this method, both of the models are actually nearly identical. Both include the same significant variables with nearly identical p-values:
+
+| Variable      | Poisson Estimate | Poisson p-value | Negative Binomial Estimate | Negative Binomial p-value |
+|--------------|-----------------|----------------|---------------------------|--------------------------|
+| `st_met`     | -0.4569         | 0.000472 ***   | -0.4569                   | 0.000473 ***            |
+| `pl_orbper`  | -0.001757       | 3.89e-07 ***   | -0.001757                 | 3.91e-07 ***            |
+| `pl_orbsmax` | 1.4170          | 1.59e-09 ***   | 1.4170                    | 1.60e-09 ***            |
+| `pl_orbeccen`| -0.6658         | 0.000377 ***   | -0.6658                   | 0.000378 ***            |
+| `pl_insol`   | -5.366e-05      | 0.035062 *     | -5.365e-05                | 0.035101 *              |
+| `st_dens`    | 0.01413         | 1.88e-05 ***   | 0.01413                   | 1.88e-05 ***            |
+
+Both models also have the same amount of residual deviance.
+
+| Model             | Residual Deviance |
+|-------------------|-------------------|
+| Poisson           | 660.77            |
+| Negative Binomial | 660.63            |
+
+This makes them difficult to compare. What, then, of the second method?
+
+### Imputation
+
+Imputation fills in missing values with various methods. For this data, KNN-imputation will be used, which picks similar observations to fill in missing values.
+
+```{r, message = FALSE}
+data_imputed <- knnImputation(data, k = 10)
+```
+
+```{r, message = FALSE}
+poisson_model_imputed <- glm(sy_pnum ~ sy_snum + st_mass + st_rad + st_lum + st_met + pl_orbper + pl_orbsmax + pl_orbeccen + st_age + pl_insol + st_logg + st_dens, data = data_imputed, family = poisson)
+
+negative_binomial_model_imputed <- glm.nb(sy_pnum ~ sy_snum + st_mass + st_rad + st_lum + st_met + pl_orbper + pl_orbsmax + pl_orbeccen + st_age + pl_insol + st_logg + st_dens, data = data_imputed)
 ```
 
 ```{r}
-library(MASS)
-
-negative_binomial_model <- glm.nb(sy_pnum ~ sy_snum + st_mass + st_rad + st_lum + st_met + pl_orbper + pl_orbsmax + pl_orbeccen + st_age + pl_insol + st_logg + st_dens + st_vsin, data = data)
-
-summary(negative_binomial_model)
+#summary(poisson_model_imputed)
+#print("###################################")
+#summary(negative_binomial_model_imputed)
 ```
+
+| Variable      | Poisson Estimate (Imputed) | Poisson p-value | Negative Binomial Estimate (Imputed) | Negative Binomial p-value |
+|--------------|--------------------------|----------------|----------------------------------|--------------------------|
+| `sy_snum`    | 0.1403                    | 8.07e-07 ***   | 0.1403                           | 8.09e-07 ***            |
+| `st_met`     | -0.1238                   | 0.0324 *       | -0.1238                          | 0.0324 *                |
+| `st_lum`     | -0.0562                   | 0.0542 .       | -0.0562                          | 0.0542 .                |
+| `pl_orbeccen`| -0.3588                   | 2.49e-05 ***   | -0.3588                          | 2.49e-05 ***            |
+| `pl_insol`   | -1.052e-04                | 6.35e-10 ***   | -1.052e-04                       | 6.37e-10 ***            |
+
+These models, with imputation, show a new set of significant variables. Only 'sy_snum,' 'pl_orbeccen,' and 'pl_insol' remain in common between the two sets of models. 
+
+## Row-Removal vs Imputation & Poisson vs Negative Binomial
+
+Again, both models have approximately the same amount of residual deviance.
+
+| Model             | Residual Deviance |
+|-------------------|-------------------|
+| Poisson           | 3235.1            |
+| Negative Binomial | 3234.6            |
+
+All four models pass the chi-squared Goodness-of-Fit test, with no evidence to show that any of them are a bad model (p ~= 1 for all)
 
 ```{r}
-# Model comparison, decide which is better
+paste("Poisson Model (Original Data) Goodness-of-Fit p-value:", 1 - pchisq(poisson_model$deviance, poisson_model$df.residual))
+
+paste("Poisson Model (Imputed Data) Goodness-of-Fit p-value:", 1 - pchisq(poisson_model_imputed$deviance, poisson_model_imputed$df.residual))
+
+paste("Negative Binomial Model (Original Data) Goodness-of-Fit p-value:", 1 - pchisq(negative_binomial_model$deviance, negative_binomial_model$df.residual))
+
+paste("Negative Binomial Model (Imputed Data) Goodness-of-Fit p-value:", 1 - pchisq(negative_binomial_model_imputed$deviance, negative_binomial_model_imputed$df.residual))
 ```
 
-```{r}
-# Feature selection on final model
-```
+Given that the output between Poisson/Negative Binomial is so similar, a lack of overdispersion in our data as seen by the dispersion parameter below lends to the choice of a simpler Poisson model.
 
 ```{r}
-# Conclusion - Answer research question, areas for improvement, and future work
+dispersion_parameter <- var(data$sy_pnum) / mean(data$sy_pnum)
+dispersion_parameter
 ```
+
+Still, we have to compare the row-removal and imputation-based models. Comparing the two Poisson models according to AIC is difficult, since there is a different number of observations in each model. The next best approach could be to compare the residuals vs fitted plots for each model:
+
+```{r, message = FALSE}
+residuals_row_removal <- data.frame(
+  row_removal_residuals = poisson_model$residuals,
+  row_removal_fitted_values = poisson_model$fitted.values
+)
+
+residuals_imputation <- data.frame(
+  imputation_residuals = poisson_model_imputed$residuals,
+  imputation_fitted_values = poisson_model_imputed$fitted.values
+)
+
+ggplot(data = residuals_row_removal, aes(x=row_removal_fitted_values, y=row_removal_residuals)) +
+  geom_point() + 
+  geom_smooth(color = "red") +
+  geom_smooth(method = lm) +
+  labs(
+    title = 'Residuals vs Fitted Values',
+    x='Fitted Values', 
+    y='Residuals',
+    caption='Residuals vs Fitted Values for row removal data') +
+  ylim(-1, 15) +
+  xlim(0, 3)
+
+ggplot(data = residuals_imputation, aes(x=imputation_fitted_values, y=imputation_residuals)) +
+  geom_point() + 
+  geom_smooth(color = "red") +
+  geom_smooth(method = lm) +
+  labs(
+    title = 'Residuals vs Fitted Values',
+    x='Fitted Values', 
+    y='Residuals',
+    caption='Residuals vs Fitted Values for knn-imputed data') +
+  ylim(-1, 15) +
+  xlim(0, 3)
+```
+
+Though both graphs look very similar, the graph for knn-imputed data looks to handle clumping just slightly better than the row-removal data. For the remainder of this report, 'poisson_model_imputed' will be used. There is certainly clumping present, which is worth noting.
+
+# Feature Selection
+
+By using both backward and forward stepping and comparing the results, we can select the most important features from our model to place in the final model:
+
+```{r}
+poisson_model_imputed_backward <- step(poisson_model_imputed, direction='backward', trace = 0)
+poisson_model_imputed_forward <- step(poisson_model_imputed, direction='forward', trace = 0)
+
+#summary(poisson_model_imputed_backward)
+#summary(poisson_model_imputed_forward)
+```
+
+| Variable      | Backward Stepping Estimate | Backward Stepping p-value | Forward Stepping Estimate | Forward Stepping p-value |
+|--------------|----------------------------|----------------------------|----------------------------|----------------------------|
+| `sy_snum`    | 0.1447                      | 3.17e-07 ***               | 0.1403                      | 8.07e-07 ***               |
+| `st_mass`    | —                           | —                          | -0.02786                    | 0.6491                      |
+| `st_rad`     | —                           | —                          | 0.0009943                   | 0.8318                      |
+| `st_lum`     | -0.07634                    | 1.11e-07 ***               | -0.05616                    | 0.0542 .                    |
+| `st_met`     | -0.1258                     | 0.023 *                    | -0.1238                     | 0.0324 *                    |
+| `pl_orbper`  | —                           | —                          | -5.234e-05                  | 0.2203                      |
+| `pl_orbsmax` | —                           | —                          | 0.05910                     | 0.1211                      |
+| `pl_orbeccen`| -0.3270                     | 2.44e-05 ***               | -0.3588                     | 2.49e-05 ***                |
+| `st_age`     | —                           | —                          | 0.001585                    | 0.6637                      |
+| `pl_insol`   | -1.150e-04                  | 1.04e-12 ***               | -1.052e-04                  | 6.35e-10 ***                |
+| `st_logg`    | —                           | —                          | 0.06101                     | 0.2713                      |
+| `st_dens`    | —                           | —                          | -3.921e-04                  | 0.7788                      |
+
+Both the backward and forward stepping model come to the same conclusion in regards to significant (or barely marginally significant) variables. Thus, the backward stepping model is probably a better choice in its simplicity.
+
+The backward stepping model scores as a 1 on the chi-squared test, meaning that there is no evidence the model is a bad fit:
+
+```{r}
+1 - pchisq(poisson_model$deviance, poisson_model$df.residual)
+```
+
+The dispersion parameter is below 1, which signifies a lack of overdispersion.
+
+```{r}
+final_dispersion_parameter <- var(data_imputed$sy_pnum) / mean(data_imputed$sy_pnum)
+final_dispersion_parameter
+```
+
+Despite EDA showing some possible multicollinearity problems, our final model does not include any variables with multicollinearity issues, as all have a VIF between 1.0 and 1.2. 
+
+```{r}
+final_model <- poisson_model_imputed_backward
+
+vif(final_model)
+```
+
+The residuals vs fitted graph shows a decent amount of clustering, which is worth being concerned about.
+
+```{r}
+residuals_final_model <- data.frame(
+  final_residuals = final_model$residuals,
+  final_fitted_values = final_model$fitted.values
+)
+
+ggplot(data = residuals_final_model, aes(x=final_fitted_values, y=final_residuals)) +
+  geom_point() + 
+  geom_smooth(color = "red") +
+  geom_smooth(method = lm) +
+  labs(
+    title = 'Residuals vs Fitted Values',
+    x='Fitted Values', 
+    y='Residuals',
+    caption='Residuals vs Fitted Values for the final model') +
+  ylim(-1, 15) +
+  xlim(0, 3)
+```
+
+| Variable     | Coefficient Estimate        | p-value                    |
+|--------------|-----------------------------|----------------------------|
+| `sy_snum`    | 0.1447                      | 3.17e-07 ***               |
+| `st_lum`     | -0.07634                    | 1.11e-07 ***               |
+| `st_met`     | -0.1258                     | 0.023 *                    |
+| `pl_orbeccen`| -0.3270                     | 2.44e-05 ***               |
+| `pl_insol`   | -1.150e-04                  | 1.04e-12 ***               |
+
+The coefficients can be interpreted by exponentiating them, giving the following normal language interpretations:
+
+> For each additional star in a system (sy_snum), the expected number of planets increases by 15.57%.
+
+> For each unit increase in stellar luminosity, the expected number of planets decreases by 7.35%.
+
+> For each unit increase in stellar metallicity, the expected number of planets decreases by 11.82%.
+
+> For each unit increase in planetary orbital eccentricity, the expected number of planets decreases by 27.89%
+
+> For each unit increase in insolation flux, the expected number of planets decreases by .01%.
+
+# Conclusion
+According to our final model, it seems that 'sy_snum' (number of stars), 'st_lum' (luminosity of stars), 'st_met' (stellar metallacity), 'pl_orbeccen' (eccentricity of orbit), and 'pl_insol' (insolation flux)  are the most important factors when determining the number of exoplanets in an star system.
+
+These are very intriguing results for the science - some of these factors, like eccentricity, stellar metallicity, and insolation flux are not intuitively tied to the number of planets in a system. 
+
+Missing data is the greatest area for improvement in this model. The p-significant variables changed depending on how the missing data was accounted for, which could make a big difference when physicists are building star system models.
+
+Machine learning could also be implemented in the future to capture 'feature importance' by means of different algorithms than the ones we are exposed to in this class. 
